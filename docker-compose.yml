@@ -1,0 +1,10 @@
+services:
+  server-1:
+    image: demo-server
+    container_name: server-1
+    ports:
+      - "4000:80"
+  client-1:
+    image: demo-client
+    container_name: client-1
+
