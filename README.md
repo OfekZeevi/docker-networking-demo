@@ -65,7 +65,50 @@ port 80 in a separate namespace. To connect the main network namespace with the 
 `docker run -d -p 4000:80 --name server-1 demo-server` or `./run.sh`, and now do `wget` for port 4000.
 
 ## Demo #2 - basic network separation with namespaces
-...
+We can create a dummy interface and move it to a separate namespace pretty easily:
+```bash
+ip link add dev my-if type dummy  # Create the interface "my-if"
+ip link set my-if up              #
+ip addr add dev my-if 1.2.3.4/32  # Give it ip address 1.2.3.4
+ping 1.2.3.4                      # Ping works
+
+ip netns add my-net                                    # Create the network namespace "my-net"
+ip link set dev my-if netns my-net                     # Move "my-if" into "my-net"
+ip netns exec my-net ip link set lo up                 # 
+ip netns exec my-net ip link set my-if up              # 
+ip netns exec my-net ip addr add dev my-if 1.2.3.4/32  # Give it ip address 1.2.3.4 again
+ping 1.2.3.4                                           # Doesn't respond to ping!
+ip netns exec my-net ping 1.2.3.4                      # Ping works only from within namespace...
+ip netns exec my-net ping 8.8.8.8                      # But ping to the outside world doesn't work
+```
+But unfortunately, in this way we cannot communicate from the main network namespace to the internal one.
+What we need is **veth** - a special kind of interface that is created in connected pairs, so that we can move one side
+into the network namespace, but keep the other side in the main namespace, and so communication works between them.
+```bash
+sudo ip link add dev veth0 type veth peer name veth1
+sudo ip link set veth1 netns my-net
+
+sudo ip link set veth0 up
+sudo ip addr add dev veth0 10.11.12.13/24
+
+sudo ip netns exec my-net ip link set veth1 up
+sudo ip netns exec my-net ip addr add dev veth1 10.11.12.14/24
+
+ping 10.11.12.14
+sudo ip netns exec my-net ping 10.11.12.13
+```
+Now we know how to separate interfaces into different namespaces but still allow them to communicate!
+
+Finally, we can show that this is indeed what docker does. Run
+```bash
+docker run -d --name test alpine sleep 99999
+ip a                                          # Shows one end of the veth
+docker exec test ip a                         # Shows the other end of the veth
+ping 172.17.0.2                               # Ping works from the host!
+```
+
+## Demo #2 - how containers communicate with the outside world
+We can run a container and it'll magically allow us to communicate with the outside world. How?
 
 ## On general computer
 ip a
