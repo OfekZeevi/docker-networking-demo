@@ -1,7 +1,7 @@
 #!/bin/bash
 
-docker stop client-1 server-1
-docker network rm my-net
+docker kill client-1 server-1
+docker network rm demo-net
 
 docker network create demo-net
 docker run -d --rm -p 4000:80 --name server-1 --network demo-net demo-server
