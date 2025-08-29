@@ -37,7 +37,7 @@ If the package isn't available, try `pip install docker-compose` instead. Finall
 sudo chmod +x *.sh */*.sh
 ```
 
-## Demo #1 - basic docker usage
+## Demo #0 - basic docker usage
 To run a basic docker image, use
 ```bash
 docker run -it alpine sh
@@ -82,7 +82,7 @@ docker run -d -p 4000:80 --name server-1 demo-server
 ```
 or `./run.sh`, and now do `wget` for port 4000.
 
-## Demo #2 - basic network separation with namespaces
+## Demo #1 - basic network separation with namespaces
 We can create a dummy interface and move it to a separate namespace pretty easily:
 ```bash
 ip link add dev my-if type dummy  # Create the interface "my-if"
@@ -126,28 +126,95 @@ ping 172.17.0.2                               # Ping works from the host!
 ```
 
 ## Demo #2 - how containers communicate with the outside world
-We can run a container and it'll magically allow us to communicate with the outside world. How?
+We can run a container and it'll magically allow us to communicate with the outside world. For example,
+```bash
+cd server && ./run.sh
+docker exec server-1 ping 8.8.8.8
+```
+How?
+The answer has three parts: a bridge, iptables and ipv4 forwarding.
+First of all, let's show the bridge that makes the magic happens. Running our server again, we use
+```bash
+sudo brctl show
+```
+to see that docker created a bridge and placed one veth-end into it. A bridge is like a virtual switch. However,
+it also creates a local virtual interface for easier usage, in this case that's "docker0" (`ip a show docker0`).
+So for the first stage, linux create a bridge and gave its virtual interface the address 172.17.0.1. It then created
+the veth-pair, placed one end in the container's NS (and gave it an IP address) and the other in the bridge. Finally,
+it configured the container to reach out for "docker0" as its default gateway.
+```bash
+sudo lsns -t net
+sudo nsenter --net=<docker-network-ns-path> ip route
+```
+Next up, we need to setup a NAT - for that we can use iptables.
+```bash
+iptables -nvL -t nat | grep docker0
+```
 
-## On general computer
-ip a
-ip route
-(you can del and add route with different ip addr to show how it works)
-(or del it and show that it breaks the container network)
-sudo tcpdump -ni eth0
-sudo tcpdump -ni docker0
-sudo ps -fe | grep docker-proxy
+Finally, we also need to allow linux to pass packets between interfaces. The condition is: whenever a packet reaches
+an interface, with the dst mac pointing to the interface but the ip address is different, then forward it to the best
+match you have in your forwarding table. This is governed by `sysctl net.ipv4.conf.all.forwarding`. If we run
+```bash
+sudo sysctl -w net.ipv4.conf.all.forwarding=0
+```
+the communication from the container to the outside world will stop working! Run `docker exec server-1 ping 8.8.8.8` to
+see. You can enable it back (with `=1`) to make it work again. All three parts are required so that the packet:
+1. Reaches the default gateway, which is an interface in the global network namespace,
+2. Is forwarded to the best matching interface based on linux's routing table, and
+3. Is transferred using NAT to the outside world (so that we'll be able to receive the answers).
+
+## Demo #3 - how containers communicate with each other
+For starters, run
+```bash
+./run-network-demo.sh
+```
+to set up everything. Interestingly, we can address the server from the client both using IP or using its name! How?
+```bash
+docker exec server-1 ip a    # find the 172.17.*.* address of the server
+docker exec -it client-1 sh  # enter the client container
+ping <server-1-ip-address>   # this should work
+ping server-1                # but somehow this also works
+```
+
+IP communication is easier. By using `brctl show` again, we can clearly see that there's a bridge with two veth 
+interfaces in it - that is our docker network! (we created a custom one, and that's why it's not called docker0).
+So the packets enter from within the container namespace to the veth, pop out the other end into the bridge, are
+then switched to the other container's veth-pair, and pop out inside the other container's namespace.
+
+As for DNS names - something cleverer is happening here...
+```bash
+docker inspect server-1                                # has a DNS name configured here
+docker exec client-1 cat /etc/resolv.conf              # look at the container's DNS server configuration
+sudo lsns -t net                                       # look for the client network NS
+sudo nsenter --net=<path-to-client-ns> netstat -tupln  # dockerd is listening!
+```
+So apparently whenever we use a custom network, for every container - dockerd creates a socket **inside** that network
+NS, and so it receives all the DNS requests from all the containers. It then uses the configuration seen on `inspect`
+to find the correct container and its IP address.
+
+You can run `./stop-network-demo.sh` and then
+```bash
+docker-compose up -d
+```
+and look at `brctl show` (or `docker network ls`) to see that docker-compose does this automatically! It creates
+and network and puts both containers inside that network for DNS to work.
+
+## Demo #4 - how the outside world can communicate with the container
+Interestingly, docker's solution is quite simple here. After running the full setup, run
+```bash
 sudo netstat -tupln | grep 4000
+```
+you'll see that there's a process called `docker-proxy` listening on that port. We can easily see it with
+```bash
+sudo ps -fe | grep docker-proxy
+```
+It has run-params with the specific IP addresses and ports it should bind and forward to, and it just performs the
+proxy for us. This is simple because it makes sure the host knows that this port is available and works accross many
+different systems.
+And for each exposed port, docker will just spin up another instance of that process!
 
-brctl show (all container network interfaces have one part of their veth in there)
+## Summary
+There are many interesting things about docker networking, but as this demo hopefully shows, they all rely on 
+fundamental mechanisms of linux  networking, and they are all tracable and understandable if you dive deep enough.
+Enjoy!
 
-## Docker commands
-docker network ls
-docker run --network <net-name> ...
-(then names will be automatically resolved between containers on the same network)
-docker inspect <container_name> (show the network section, specifically DNS names)
-
-docker-compose up -d (show the network and everything)
-
-## Namespace commands
-sudo lsns -t net | grep python
-sudo nsenter --net=<path e.g. /run/docker/netns/d730f0...> ip a
