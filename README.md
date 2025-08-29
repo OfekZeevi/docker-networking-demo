@@ -34,35 +34,53 @@ If the package isn't available, try `pip install docker-compose` instead. Finall
 
 **Note:** If you intend on running the `.sh` scripts in this repo, make sure to run
 ```bash
-sudo chmod +x *.sh && sudo chmod +x */*.sh
+sudo chmod +x *.sh */*.sh
 ```
 
 ## Demo #1 - basic docker usage
 To run a basic docker image, use
-`docker run -it alpine sh`
+```bash
+docker run -it alpine sh
+```
 Play around with it to see that you're in a separate namespace - different file system (`ls /`), different PIDs 
-(`ps -fe`), different network (`ip a`) and so on. To exit, use cmd+d.
-Next, let's play around with the file system. Run `docker run -it -v /tmp:/host-tmp alpine sh` to create a shared
-directory between the host and the container - the host's `/tmp` will be accessible from within the container through
-the `/host-tmp` directory. You can create files in one and then read them in the other.
+(`ps -fe`), different network (`ip a`) and so on. To exit, use `ctrl+d`.
+
+Next, let's play around with the file system. Run 
+```bash
+docker run -it -v /tmp:/host-tmp alpine sh
+```
+to create a shared directory between the host and the container - the host's `/tmp` will be accessible from within the 
+container through the `/host-tmp` directory. You can create files in one and then read them in the other.
 
 For the next demo, we're gonna run a container in the background. We can use `-d` for that.
 For example, run
-`docker run -d alpine sleep 99999`
-and then `docker ps` to see that your container is running! We can even see the `sleep` command by using 
+```bash
+docker run -d alpine sleep 99999
+```
+and then `docker ps` to see that your container is running. We can even see the `sleep` command by using 
 `sudo ps -fe | grep sleep` in our main shell. But that's not very exciting, it's literally doing nothing, so try
-`docker run -d alpine watch date`. Now our container prints the date and time every 2 seconds! Use 
-`docker logs <container-name>` to see that.
+```bash
+docker run -d alpine watch date
+```
+Now our container prints the date and time every 2 seconds! Use `docker logs <container-name>` to see that.
 
 Finally, we're gonna run a container that actually does something - in this case, an HTTP server. See the contents of
 `server/Dockerfile` to see how we describe what should be installed in our docker image, which files it should have and 
-what commands it should run on startup. Enter the `server` dir and run `docker build -t demo-server .` or simply 
-`./build.sh`. This will create an image named "demo-server" with our configuration. Run it with 
-`docker run -d --name server-1 demo-server`.
+what commands it should run on startup. Enter the `server` dir and run 
+```bash
+docker build -t demo-server .
+``` 
+or simply `./build.sh`. This will create an image named "demo-server" with our configuration. Run it with 
+```bash
+docker run -d --name server-1 demo-server
+```
 You can see it with `docker ps`, but unfortunately it doesn't work! `wget -q -O - http://localhost/` and we get no response.
 But run `docker exec -it server-1 sh` and then `wget` again and suddenly it does! The reason is that it's listening on
 port 80 in a separate namespace. To connect the main network namespace with the internal one, run
-`docker run -d -p 4000:80 --name server-1 demo-server` or `./run.sh`, and now do `wget` for port 4000.
+```bash
+docker run -d -p 4000:80 --name server-1 demo-server
+```
+or `./run.sh`, and now do `wget` for port 4000.
 
 ## Demo #2 - basic network separation with namespaces
 We can create a dummy interface and move it to a separate namespace pretty easily:
